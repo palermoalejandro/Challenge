@@ -44,13 +44,13 @@ RUN apt-get update && \
         git \
 
         vim \
-		
+
 		dialog \
-        
+
 		software-properties-common \
 
         zip \
-		
+
 		net-tools \
 
         python3.5 \
@@ -59,9 +59,9 @@ RUN apt-get update && \
 
         python-distribute \
 
-        python-pip 
+        python3-setuptools\
 
-
+        python3-pip
 
 
 #Workaround to use source command that is part of the bash built-in services required for next steps
@@ -76,24 +76,22 @@ RUN rm /bin/sh && ln -s /bin/bash /bin/sh
 
 #PIP
 
-RUN pip install --upgrade pip
 
-RUN pip install beautifulsoup4
+RUN pip3 install beautifulsoup4
 
-RUN pip install docopt
+RUN pip3 install docopt
 
-RUN pip install tabulate
+RUN pip3 install tabulate
 
-RUN pip install requests
+RUN pip3 install requests
 
-RUN pip install tld
-
+RUN pip3 install tld
 
 
+RUN mkdir /app
 
 
 #Add challenge App
-RUN mkdir /app
 
 ADD challenge.py /app
 
