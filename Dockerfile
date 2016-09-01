@@ -93,6 +93,7 @@ RUN pip install tld
 
 
 #Add challenge App
+RUN mkdir /app
 
 ADD challenge.py /app
 
