@@ -95,4 +95,4 @@ RUN mkdir /app
 
 ADD challenge.py /app
 
-ADD tests.py /app
+ADD vectors.py /app
