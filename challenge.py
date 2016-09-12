@@ -300,5 +300,5 @@ def main(docopt_args):
 
 
 if __name__ == "__main__":
-  args = docopt(__doc__, version='Version 1.0')
+  args = docopt(__doc__, version='Version 1.1')
   main(args)
