@@ -25,7 +25,9 @@ from tld.utils import update_tld_names
 from bs4 import BeautifulSoup
 from tld import get_tld
 from tabulate import tabulate
+from vectors import vectors
 import urllib
+import datetime
 import threading
 import requests
 import sys
@@ -45,165 +47,220 @@ urls = []
 def save_url(row, database):
 	conn = sqlite3.connect(database)
 	c = conn.cursor()
-	c.execute("create table IF NOT EXISTS vulnerable_xss (domain TEXT, url TEXT, variable TEXT, data TEXT) ")
-	c.execute("INSERT INTO vulnerable_xss (domain, url, variable, data) VALUES (?,?,?,?)", row)
+	c.execute("create table IF NOT EXISTS vulnerable_xss (domain TEXT, url TEXT, variable TEXT, payload TEXT, method TEXT) ")
+	c.execute("INSERT INTO vulnerable_xss (domain, url, variable, payload, method) VALUES (?,?,?,?,?)", row)
 	conn.commit()
 	conn.close()
 
-#checks for posible xss vulnerabiltys on the string parameter
-#searching for kwnown dangerous characters.
-def check4xss(parameter, tags):
-	res = False
-	aux = ''
-	soup = BeautifulSoup(parameter, 'html.parser')
-	if soup.find_all(True):
-		#search for every tag an check if it is allowed
-		for foundtag in soup.find_all(True):
-			if foundtag.name not in tags.keys():
-				res = True
-			else:
-				attributes = []
-				attributes = tags[foundtag.name]
-				#for every allowed tag, check its attributes
-				for attr in foundtag.attrs:
-					if attr not in attributes:
-						res = True
-					else:
-						#save a copy of the original value
-						aux = foundtag.attrs[attr]
-						#replace every special character and whitespace
-						aux = aux.replace(' ', '')
-						aux = aux.replace('\t', '')
-						aux = aux.replace('\n', '')
-						aux = aux.replace('\r', '')
-						aux = aux.replace('\0', '')
-						aux = aux.replace('\x0b', '') 
-						aux = aux.replace('\x0c', '')
-						#turn value to upper case
-						aux = aux.upper()
-						#check for javaScript, VBscript tags in the url
-						if 'JAVASCRIPT' in aux:
-							res = True
-						if 'VBSCRIPT' in aux:
-							res = True
-						if 'LIVESCRIPT' in aux:
-							res = True			
-	else:
-		#save a copy of the original value
-		aux = parameter
-		#replace every special character and whitespace
-		aux = aux.replace(' ', '')
-		aux = aux.replace('\t', '')
-		aux = aux.replace('\n', '')
-		aux = aux.replace('\r', '')
-		aux = aux.replace('\0', '')
-		aux = aux.replace('\x0b', '') 
-		aux = aux.replace('\x0c', '')		
-		#turn value to upper case
-		aux = aux.upper()
 
-		#check for javaScript, VBscript tags in the url
-		if 'JAVASCRIPT' in aux:
-			res = True
-		if 'VBSCRIPT' in aux:
-			res = True
-		if 'LIVESCRIPT' in aux:
-			res = True		
-	return res
+def check4xss(req, key):
+	#check the Status on web response
+	#200 = OK
+	if req.status_code == 200:  
+		#find the hashed key in the web content
+		#to ensure that atack was successful
+		if key in req.text:
+			return True
+		else:
+			return False
+	else:
+		return False
 
 
 #
-def analize_url(url, cookies ,database, tags):
+def analize_url(url, cookies ,database):
 	#initialize check to request web
-	safe = False
+	safe = True
 	global urls
 	threads = []
-   	
-   	#save domain
-	domain = get_tld(url)
-
 	parsedurl = urlparse(url)
-	#parse every parameter in the url
-	params = urllib.parse.parse_qsl(parsedurl.query)
+	print('--------------------------------------------------\n')
+	print('Analyzing url: %s', url)
+	print('--------------------------------------------------\n')	
 
-	if not params:
-		row = (domain ,url, 'path', parsedurl.path) 
-		if check4xss(parsedurl.path, tags):
-			save_url(row, database)
-		else:
-			#if no xss found, request web
+	#check if it is a valid url to analize
+	if parsedurl.scheme == "http" or parsedurl.scheme == "https":
+	
+		#generate a hashed key to identify if the atack was successful
+	   	
+		hashed_key =  hashlib.md5((str(datetime.datetime.now()) + 'XSS').encode('UTF-8')).hexdigest()
+		#save domain
+		domain = get_tld(url)
+
+
+		#parse every parameter in the url
+		params = urllib.parse.parse_qsl(parsedurl.query)
+		#print(params)
+		if not params:
+			#no parameters to analyze
+			print('No parameters to analyze found for %s', url)
 			safe = True
-	else:
-		for parameter in params:
-			#parameter is a tuple (param, value)
-			row = (domain ,url, parameter[0], parameter[1])	
-
-			if check4xss(parameter[1],tags):
-				#save to database	
-				save_url(row,database)
-			else:
-				#if no xss found, request web
-				safe = True
-
-	#after checking parameters and path its safe to continue		
-	if safe:
-		if(cookies):
-			#load cookies as a cookie jar	
-			cookiejar = requests.utils.cookiejar_from_dict(cookies)
-			request = requests.get(url, cookies = cookiejar)
 		else:
-			request = requests.get(url)
+			if len(params) == 1:
+				parameter = params[0]
+				#parameter is a tuple (param, value)
 
-		#Parse the html response 
-		parsedHtml = BeautifulSoup(request.text, 'html.parser')
+				#atack the url changing the value for the parameter using method GET
+				for vector in vectors:
+					#every vector has a payload, and information about the vulnerable browser
+					#example:
+					#{ 'payload':'''">PAYLOAD''','browser':"""[IE7.0|IE6.0|NS8.1-IE] [NS8.1-G|FF2.0] [O9.02]"""}
+					
+					#prepare the atack payload
+					atack = vector['payload'].strip()
 
-		links = []
+					#replace "payload" with hashed key
+					atack = atack.replace("PAYLOAD", hashed_key)
+					plain_url = parsedurl.scheme + '://'+ parsedurl.netloc + parsedurl.path
+					
+					#Method: GET 
+					#send request using GET
+					payload = {parameter[0]: atack}
+					
+					if cookies:
+						req = requests.get(plain_url, params=payload, cookies=cookies)
+					else:
+						req = requests.get(plain_url, params=payload) 					
 
-		#find all links on the web
-		for link in parsedHtml.find_all('a'):
-			links.append(link.get('href'))
-		for link in links:
-			if link:
-				if domain == get_tld(link,fail_silently=True):
-					#check if the url was alredy analized
-					l.acquire()
-					hashurl = (hashlib.md5(link.encode('UTF-8'))).hexdigest()
-					if(hashurl not in urls):
-			    		#add link to urls
-						urls.append(hashurl)
-						l.release()
-						#check semaphore count
-						sem.acquire()
-						#create a new thread and analize the url
-						t = threading.Thread(target=analize_url,  args=(link,cookies,database,tags))
-				    	
-						#save created thread
-						threads.append(t)
-						t.start()
-					else :
-						l.release()	
+					#print(req.text)
+					#check if the result was a sucessfull atack 
+					if check4xss(req, hashed_key):
+						#save to database	
+						row = (domain ,plain_url, parameter[0], atack, 'GET')	
+						save_url(row,database)
+						safe = False
+
+					#Method: POST
+
+					#send request using POST			
+					payload = {parameter[0]: atack}
+
+					if cookies:
+						req = requests.post(plain_url, params=payload, cookies=cookies)
+					else:
+						req = requests.post(plain_url, params=payload) 					
+					#check if the result was a sucessfull atack 
+
+					if check4xss(req, hashed_key):
+						#save to database	
+						row = (domain ,plain_url, parameter[0], atack, 'POST')	
+						save_url(row,database)
+						safe = False				
+
+			else:
+				#check for every parameter in the url			
+				for parameter in params:
+					#copy original parameters and values
+					params2 = params
+					#get the index in the list
+					i = params.indexof(parameter)
+
+					#atack the url changing the value for the parameter using method GET
+					for vector in vectors:
+						#every vector has a payload, and information about the vulnerable browser
+						#example:
+						#{ 'payload':'''">PAYLOAD''','browser':"""[IE7.0|IE6.0|NS8.1-IE] [NS8.1-G|FF2.0] [O9.02]"""}
+						
+						#prepare the atack payload
+						atack = vector['payload'].strip()
+
+						#replace "payload" with hashed key
+						atack = atack.replace("PAYLOAD", hashed_key)
+						plain_url = parsedurl.scheme + '://'+ parsedurl.netloc + parsedurl.path
+						parameter[1] = atack
+						params2[i] = parameter
+						
+						
+						#prepare the payload
+						payload = {}
+						for parameter2 in params2:
+							
+							payload.update({parameter2[0]:parameter[1]})
+
+						#Method: GET 
+						#send request using GET
+						
+						if cookies:
+							req = requests.get(plain_url, params=payload, cookies=cookies)
+						else:
+							req = requests.get(plain_url, params=payload) 					
+
+						#print(req.text)
+						#check if the result was a sucessfull atack 
+						if check4xss(req, hashed_key):
+							#save to database	
+							row = (domain ,plain_url, parameter[0], atack, 'GET')	
+							save_url(row,database)
+							safe = False
+
+						#Method: POST
+
+						#send request using POST			
+						if cookies:
+							req = requests.post(plain_url, params=payload, cookies=cookies)
+						else:
+							req = requests.post(plain_url, params=payload) 					
+						#check if the result was a sucessfull atack 
+
+						if check4xss(req, hashed_key):
+							#save to database	
+							row = (domain ,plain_url, parameter[0], atack, 'POST')	
+							save_url(row,database)
+							safe = False				
+		#after checking parameters check the vulnerabily in the rest of the links		
+		if not safe:
+			if(cookies):
+				#load cookies as a cookie jar	
+				cookiejar = requests.utils.cookiejar_from_dict(cookies)
+				request = requests.get(url, cookies = cookiejar)
+			else:
+				request = requests.get(url)
+
+			#Parse the html response 
+			parsedHtml = BeautifulSoup(request.text, 'html.parser')
+
+			links = []
+
+			#find all links on the web
+			for link in parsedHtml.find_all('a'):
+				links.append(link.get('href'))
+			for link in links:
+				if link:
+					if domain == get_tld(link,fail_silently=True):
+						#check if the url was alredy analized
+						#print('L acquire')
+						l.acquire()
+						hashurl = (hashlib.md5(link.encode('UTF-8'))).hexdigest()
+						if(hashurl not in urls):
+				    		#add link to urls
+							urls.append(hashurl)
+							#print('L release')
+							l.release()
+							#check semaphore count
+							#print('sem acquire')
+							sem.acquire()
+							#create a new thread and analize the url
+							t = threading.Thread(target=analize_url,  args=(link,cookies,database))
+					    	
+							#save created thread
+							threads.append(t)
+							t.start()
+						else :
+							#print('L acquire')
+							l.release()	
 
 	#wait for every thread to finish before closing main.
 	for t in threads:
 		t.join()
-
+	
 	#realease semaphore 
+	#print('sem release')
 	sem.release()
 
 def main(docopt_args):
 	cookies				= docopt_args['--c']
 	url 				= docopt_args['--u']
 	nthreads         	= docopt_args['--t']
-
-	#config for white-list HTML tags and Attributes
-	tags = {'a' : ['href'] , 'b': ['font-weight'] , 
-	'br': ['class','id', 'style', 'hidden'], 
-	'em': ['class','id', 'style', 'hidden'], 
-	'i': ['class','id', 'style', 'hidden'], 
-	'mark': ['class','id', 'style', 'hidden'], 
-	'p': ['class','id', 'style', 'hidden'], 
-	'span': ['class','id', 'style', 'hidden'], 
-	'strong': ['class','id', 'style', 'hidden'] }
 
     #update tld names
 	update_tld_names()
@@ -218,19 +275,21 @@ def main(docopt_args):
 	database = 'vulnerablexss.db'
 	conn = sqlite3.connect(database)
 	if not conn:
-		print('Error conectando a base de datos.')
+		print('Error conecting to database.')
 		sys.exit(1)
 	conn.close()
+	#print('sem acquire')
 	sem.acquire()
 	#analize main url
-	analize_url(url, cookies,database, tags)
+	analize_url(url, cookies, database)
 	
 	#print stored results
 	conn = sqlite3.connect(database)
 	cursor = conn.cursor()
 
 	domain = get_tld(url)
-	cursor.execute("select * from vulnerable_xss where domain = '%s'" % domain )
+	cursor.execute("create table IF NOT EXISTS vulnerable_xss (domain TEXT, url TEXT, variable TEXT, payload TEXT, method TEXT) ")
+	cursor.execute("select domain, url, variable, payload, method from vulnerable_xss where domain = '%s'" % domain )
 
 	col_names = [cn[0] for cn in cursor.description]
 	rows = cursor.fetchall()
