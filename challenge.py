@@ -75,7 +75,7 @@ def analize_url(url, cookies ,database):
 	threads = []
 	parsedurl = urlparse(url)
 	print('--------------------------------------------------\n')
-	print('Analyzing url: %s', url)
+	print('Analyzing url: ', url)
 	print('--------------------------------------------------\n')	
 
 	#check if it is a valid url to analize
@@ -90,13 +90,13 @@ def analize_url(url, cookies ,database):
 
 		#parse every parameter in the url
 		params = urllib.parse.parse_qsl(parsedurl.query)
-		#print(params)
+
 		if not params:
 			#no parameters to analyze
-			print('No parameters to analyze found for %s', url)
-			safe = True
+			print('No parameters to analyze found for ', url)
 		else:
 			if len(params) == 1:
+				#only one parameter in the URL 
 				parameter = params[0]
 				#parameter is a tuple (param, value)
 
@@ -128,7 +128,6 @@ def analize_url(url, cookies ,database):
 						#save to database	
 						row = (domain ,plain_url, parameter[0], atack, 'GET')	
 						save_url(row,database)
-						safe = False
 
 					#Method: POST
 
@@ -145,7 +144,7 @@ def analize_url(url, cookies ,database):
 						#save to database	
 						row = (domain ,plain_url, parameter[0], atack, 'POST')	
 						save_url(row,database)
-						safe = False				
+			
 
 			else:
 				#check for every parameter in the url			
@@ -180,6 +179,7 @@ def analize_url(url, cookies ,database):
 						#Method: GET 
 						#send request using GET
 						
+
 						if cookies:
 							req = requests.get(plain_url, params=payload, cookies=cookies)
 						else:
@@ -191,7 +191,7 @@ def analize_url(url, cookies ,database):
 							#save to database	
 							row = (domain ,plain_url, parameter[0], atack, 'GET')	
 							save_url(row,database)
-							safe = False
+
 
 						#Method: POST
 
@@ -206,48 +206,47 @@ def analize_url(url, cookies ,database):
 							#save to database	
 							row = (domain ,plain_url, parameter[0], atack, 'POST')	
 							save_url(row,database)
-							safe = False				
-		#after checking parameters check the vulnerabily in the rest of the links		
-		if not safe:
-			if(cookies):
-				#load cookies as a cookie jar	
-				cookiejar = requests.utils.cookiejar_from_dict(cookies)
-				request = requests.get(url, cookies = cookiejar)
-			else:
-				request = requests.get(url)
+			
+		#check the vulnerabily in the rest of the links	
+		if(cookies):
+			#load cookies as a cookie jar	
+			cookiejar = requests.utils.cookiejar_from_dict(cookies)
+			request = requests.get(url, cookies = cookiejar)
+		else:
+			request = requests.get(url)
 
-			#Parse the html response 
-			parsedHtml = BeautifulSoup(request.text, 'html.parser')
+		#Parse the html response 
+		parsedHtml = BeautifulSoup(request.text, 'html.parser')
 
-			links = []
+		links = []
 
-			#find all links on the web
-			for link in parsedHtml.find_all('a'):
-				links.append(link.get('href'))
-			for link in links:
-				if link:
-					if domain == get_tld(link,fail_silently=True):
-						#check if the url was alredy analized
+		#find all links on the web
+		for link in parsedHtml.find_all('a'):
+			links.append(link.get('href'))
+		for link in links:
+			if link:
+				if domain == get_tld(link,fail_silently=True):
+					#check if the url was alredy analized
+					#print('L acquire')
+					l.acquire()
+					hashurl = (hashlib.md5(link.encode('UTF-8'))).hexdigest()
+					if(hashurl not in urls):
+			    		#add link to urls
+						urls.append(hashurl)
+						#print('L release')
+						l.release()
+						#check semaphore count
+						#print('sem acquire')
+						sem.acquire()
+						#create a new thread and analize the url
+						t = threading.Thread(target=analize_url,  args=(link,cookies,database))
+				    	
+						#save created thread
+						threads.append(t)
+						t.start()
+					else :
 						#print('L acquire')
-						l.acquire()
-						hashurl = (hashlib.md5(link.encode('UTF-8'))).hexdigest()
-						if(hashurl not in urls):
-				    		#add link to urls
-							urls.append(hashurl)
-							#print('L release')
-							l.release()
-							#check semaphore count
-							#print('sem acquire')
-							sem.acquire()
-							#create a new thread and analize the url
-							t = threading.Thread(target=analize_url,  args=(link,cookies,database))
-					    	
-							#save created thread
-							threads.append(t)
-							t.start()
-						else :
-							#print('L acquire')
-							l.release()	
+						l.release()	
 
 	#wait for every thread to finish before closing main.
 	for t in threads:
